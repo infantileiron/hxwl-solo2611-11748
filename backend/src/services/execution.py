@@ -8,6 +8,7 @@ from src.domain.spec import SPEC
 from src.models.jobs import Delivery, Run, Schedule
 from src.models.source import Dataset
 from src.services.audit import record
+from src.services.calibrations import current_version, snapshot
 from src.utils.exports import write_report
 from src.utils.time import now
 
@@ -21,10 +22,11 @@ def materialize_due():
     with Session.begin() as db:
         schedules = db.scalars(select(Schedule).where(Schedule.enabled.is_(True), Schedule.next_at <= stamp)
                                 .order_by(Schedule.next_at).limit(20).with_for_update(skip_locked=True))
+        version = current_version(db)
         for item in schedules:
             due = item.next_at
             db.add(Run(dataset_id=item.dataset_id, schedule_id=item.id, scheduled_at=due,
-                       name=item.name, params=item.params, author=item.author))
+                       name=item.name, params=item.params, calibration_version=version, author=item.author))
             if item.repeat_daily:
                 item.next_at = due + timedelta(days=(stamp - due).days + 1)
             else:
@@ -49,14 +51,18 @@ def claim():
         job.attempt += 1
         job.lease_until = stamp + timedelta(minutes=3)
         records = db.get(Dataset, job.dataset_id).rows
-        return job.id, job.attempt, records, job.params
+        version = job.calibration_version
+        if version is None:
+            version = job.calibration_version = current_version(db)
+        calibrations = snapshot(db, version)
+        return job.id, job.attempt, records, job.params, version, calibrations
 
 
 def execute(lease):
-    job_id, attempt, rows, params = lease
+    job_id, attempt, rows, params, version, calibrations = lease
     result = export = failure = None
     try:
-        result = analyze(rows, params)
+        result = analyze(rows, params, calibrations, version)
         export = write_report(job_id, attempt, result)
     except ValueError as error:
         failure = str(error)[:500]

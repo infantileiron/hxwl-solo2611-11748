@@ -8,6 +8,7 @@ from src.config.settings import SEED_DEMO
 from src.domain.spec import SPEC
 from src.middlewares import errors, headers, rate
 from src.routes import distribution, identity, registry, runs
+from src.services.calibrations import ensure_state
 from src.utils.wakeup import broker
 
 log = logging.getLogger(__name__)
@@ -16,6 +17,7 @@ log = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(_app):
     Base.metadata.create_all(engine)
+    ensure_state()
     if SEED_DEMO:
         try:
             log.info('Seeded %s', seed())

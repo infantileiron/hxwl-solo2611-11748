@@ -2,7 +2,7 @@ import csv
 import io
 import math
 from datetime import date
-from src.domain import analysis
+from src.domain import analysis, calibration
 from src.domain.spec import SPEC
 
 
@@ -77,3 +77,30 @@ def normalize_params(params):
     if set(params) - {field['key'] for field in fields}:
         raise ValueError('存在未知运行参数，请重新打开工作面板')
     return {field['key']: cell(field, params.get(field['key'], field['default'])) for field in fields}
+
+
+def parse_calibrations(text):
+    reader = csv.DictReader(io.StringIO(text.removeprefix('﻿'), newline=''), strict=True)
+    fields = SPEC['calibration_fields']
+    keys = {field['key'] for field in fields}
+    required = {field['key'] for field in fields if field.get('required', True)}
+    rows = []
+    try:
+        headers = reader.fieldnames or []
+        if not required <= set(headers) or not set(headers) <= keys or len(headers) != len(set(headers)):
+            raise ValueError('CSV 表头与校准字段说明不符，请下载校准单模板检查列名')
+        for raw in reader:
+            if len(rows) >= 5000:
+                raise ValueError('一个校准批次最多导入 5000 行')
+            try:
+                if None in raw or any(value is None for value in raw.values()):
+                    raise ValueError('工作表的列数与表头不一致')
+                rows.append({field['key']: cell(field, raw.get(field['key'])) for field in fields})
+            except ValueError as error:
+                raise ValueError(f'校准 CSV 第 {reader.line_num} 行 · {error}') from None
+    except csv.Error:
+        raise ValueError(f'校准 CSV 第 {reader.line_num} 行附近格式不正确') from None
+    if not rows:
+        raise ValueError('校准 CSV 至少需要一行有效数据')
+    calibration.validate_rows(rows)
+    return rows

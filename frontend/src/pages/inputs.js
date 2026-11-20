@@ -5,7 +5,43 @@ import {handler} from '../hooks/action.js';
 import {session} from '../stores/session.js';
 import {workspace} from '../stores/workspace.js';
 import {button, el, link, p} from '../utils/dom.js';
-import {date} from '../utils/format.js';
+import {date, value} from '../utils/format.js';
+
+function calibrationPanel(state, refresh) {
+  const error = feedback();
+  const sample = button('下载校准单模板', {class:'quiet',onClick:event=>
+    handler(sample,error,()=>workspace.download('/calibration/template',workspace.spec.calibration_sample_name))(event)});
+  const submit = button('校验并切换校准版', {type:'submit',class:'primary'});
+  const upload = session.canWrite && el('form',{class:'fields',onSubmit:handler(submit,error,async event=>{
+    const data = new FormData(event.target);
+    const file = data.get('calibration_source');
+    if (!file?.size) throw new Error('请选择一个校准单 CSV 文件');
+    if (file.size > 2_000_000) throw new Error('校准单最多 2 MB');
+    await workspace.uploadCalibration({name:data.get('calibration_name'),filename:file.name,csv_text:await file.text()});
+    await refresh();
+  })},field({key:'calibration_name',label:'校准批次名称',type:'string',max_length:120}),
+    el('label',{class:'field',for:'calibration_source'}, el('span',{},'校准单 CSV'),
+      el('input',{id:'calibration_source',type:'file',name:'calibration_source',accept:'.csv,text/csv',required:true})), submit);
+  const entries = table([
+    {key:'probe',label:'探针'},
+    {key:'handoff_date',label:'交接日期'},
+    {key:'revision',label:'修订号'},
+    {label:'校准偏差（°C）',render:row=>`${row.offset > 0 ? '+' : ''}${value(row.offset)}`},
+    {key:'calibration_id',label:'校准单号'},
+  ], state?.entries || [], {caption:'当前生效校准', pageSize:8, empty:'还没有生效的校准单。导入后按探针与交接日期套用。'});
+  const batches = table([
+    {key:'name',label:'批次'},
+    {key:'version',label:'版本'},
+    {label:'应用 / 忽略',render:row=>`${row.applied_count} / ${row.ignored_count}`},
+    {key:'author',label:'导入人'},
+    {label:'时间',render:row=>date(row.created_at)},
+  ], state?.batches || [], {caption:'校准导入历史', pageSize:6, empty:'还没有校准导入记录。'});
+  return panel('探针校准',
+    p(`当前校准版本 v${state?.version ?? 0}。整批校验通过后一次性切换，失败沿用旧版；同修订冲突整批退回，晚到的旧修订不会覆盖新修订。`,'subtle'),
+    sample, upload, error,
+    el('h3',{}, '当前生效校准'), entries,
+    el('h3',{}, '导入历史'), batches);
+}
 
 export async function inputs(route, refresh) {
   const {spec,datasets} = workspace;
@@ -13,6 +49,7 @@ export async function inputs(route, refresh) {
   const error = feedback();
   const sample = button('下载示例 CSV', {class:'quiet',onClick:event=>handler(sample,error,()=>workspace.download('/template',spec.sample_name))(event)});
   const detail = selected && await workspace.getDataset(selected.id,route.offset);
+  const calibration = await workspace.calibration();
   const columns = spec.fields.map(field => ({key:field.key,label:field.label}));
   const preview = detail ? panel('批次明细', el('div',{class:'actions'},
     el('label',{for:'dataset-id',class:'sr'}, '选择数据批次'),
@@ -38,8 +75,10 @@ export async function inputs(route, refresh) {
     else location.hash = target;
   })},field({key:'batch_name',label:'批次名称',type:'string',max_length:120}),
     el('label',{class:'field',for:'source'}, el('span',{},'业务 CSV'),el('input',{id:'source',type:'file',name:'source',accept:'.csv,text/csv',required:true})), submit);
-  return el('div',{class:'two-col'},el('div',{class:'wide-panel'},preview),el('aside',{class:'sidebar-panel'},
+  return el('div',{class:'two-col'},el('div',{class:'wide-panel'},preview, calibrationPanel(calibration, refresh)),el('aside',{class:'sidebar-panel'},
     panel('数据导入',p('导入后保留原批次和校验指纹，可用同一份数据复跑。','subtle'),sample,upload,error),
     panel('字段说明',el('dl',{class:'dictionary'},spec.fields.map(item=>el('div',{},el('dt',{},item.label),
-      el('dd',{},item.key,item.required === false ? ' · 可空' : ' · 必填',item.options ? ` · ${item.options.join(' / ')}` : '')))))));
+      el('dd',{},item.key,item.required === false ? ' · 可空' : ' · 必填',item.options ? ` · ${item.options.join(' / ')}` : ''))))),
+    panel('校准字段说明',el('dl',{class:'dictionary'},spec.calibration_fields.map(item=>el('div',{},el('dt',{},item.label),
+      el('dd',{},item.key,item.help ? ` · ${item.help}` : '')))))));
 }

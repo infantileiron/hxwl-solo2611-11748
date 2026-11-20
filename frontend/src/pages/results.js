@@ -61,10 +61,11 @@ export async function results(route, refresh) {
     result.tables.map(item=>panel(item.title,table(item.columns,item.rows,{caption:item.title}))))
     : panel(job.name,pill(STATUS[job.status],job.status),p(job.error,'feedback'),link('返回调整参数',`#run/${job.dataset_id}`,{class:'quiet'}));
   const inputs = spec.params.map(param=>el('div',{},el('dt',{},param.label),el('dd',{},value(job.params[param.key]))));
+  const calibration = el('div',{},el('dt',{},'校准版本'),el('dd',{},job.calibration_version == null ? '未套用' : `v${job.calibration_version}`));
   return el('div',{},el('div',{class:'two-col'},el('div',{class:'wide-panel'},analysis),
     el('aside',{class:'sidebar-panel'},panel('运行来源',history,
       source && link(source.name,`#inputs/${source.id}`),p(date(job.finished_at),'subtle'),
-      el('dl',{class:'dictionary'},inputs)),
+      el('dl',{class:'dictionary'},calibration,inputs)),
     result && panel(spec.decision,pill(REVIEW[job.review],job.review),
       job.review_note && el('div',{class:'decision'},p(job.decision),p(job.review_note)),
       job.review==='pending' && session.canReview && reviewForm(job,spec,refresh)))),distribution);
